@@ -143,6 +143,18 @@ def load_parameters(query: str = "default", algorithm: str = "cdrec", dataset: s
         impute_weight = float(config[algorithm]['impute_weight'])
         num_workers = int(config[algorithm]['num_workers'])
         return (model, seq_len, epochs, batch_size, sliding_windows, hidden_layers, impute_weight, num_workers)
+    elif algorithm == "mtsit":
+        seq_len = int(config[algorithm]['seq_len'])
+        epochs = int(config[algorithm]['epochs'])
+        batch_size = int(config[algorithm]['batch_size'])
+        sliding_windows = int(config[algorithm]['sliding_windows'])
+        d_model = int(config[algorithm]['d_model'])
+        n_heads = int(config[algorithm]['n_heads'])
+        n_layers = int(config[algorithm]['n_layers'])
+        d_ffn = int(config[algorithm]['d_ffn'])
+        masking_ratio = float(config[algorithm]['masking_ratio'])
+        mean_mask_length = int(config[algorithm]['mean_mask_length'])
+        return (seq_len, epochs, batch_size, sliding_windows, d_model, n_heads, n_layers, d_ffn, masking_ratio, mean_mask_length)
     elif algorithm == "mpin":
         window = int(config[algorithm]['window'])
         incre_mode = str(config[algorithm]['incre_mode'])
@@ -522,6 +534,8 @@ def config_impute_algorithm(incomp_data, algorithm, verbose=True):
         imputer = Imputation.DeepLearning.DeepMVI(incomp_data)
     elif alg == "brits":
         imputer = Imputation.DeepLearning.BRITS(incomp_data)
+    elif alg == "mtsit":
+        imputer = Imputation.DeepLearning.MTSIT(incomp_data)
     elif alg == "mpin":
         imputer = Imputation.DeepLearning.MPIN(incomp_data)
     elif alg == "pristi":
@@ -707,6 +721,19 @@ def save_optimization(optimal_params, algorithm="cdrec", dataset="", optimizer="
             "hidden_layers": int(optimal_params[5]),
             "impute_weight": float(optimal_params[6]),
             "num_workers": int(optimal_params[7])
+        }
+    elif algorithm == "mtsit":
+        params_to_save = {
+            "seq_len": int(optimal_params[0]),
+            "epochs": int(optimal_params[1]),
+            "batch_size": int(optimal_params[2]),
+            "sliding_windows": int(optimal_params[3]),
+            "d_model": int(optimal_params[4]),
+            "n_heads": int(optimal_params[5]),
+            "n_layers": int(optimal_params[6]),
+            "d_ffn": int(optimal_params[7]),
+            "masking_ratio": float(optimal_params[8]),
+            "mean_mask_length": int(optimal_params[9])
         }
     elif algorithm == "deep_mvi" or algorithm == "deepmvi":
         params_to_save = {
@@ -2467,6 +2494,7 @@ def list_of_algorithms():
         "MeanImputeBySeries",
         "MRNN",
         "BRITS",
+        "MTSIT",
         "DeepMVI",
         "MPIN",
         "PRISTI",
@@ -2754,6 +2782,7 @@ def list_of_algorithms_with_families(specify_family=None):
         "Statistics.MeanImputeBySeries",
         "DeepLearning.MRNN",
         "DeepLearning.BRITS",
+        "DeepLearning.MTSIT",
         "DeepLearning.DeepMVI",
         "DeepLearning.MPIN",
         "DeepLearning.PRISTI",

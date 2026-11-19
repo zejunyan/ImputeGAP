@@ -118,6 +118,18 @@ hidden_layers = 108
 impute_weight = 0.3
 num_workers = 0
 
+[mtsit]
+seq_len = -1
+epochs = 100
+batch_size = -1
+sliding_windows = 1
+d_model = 16
+n_heads = 4
+n_layers = 3
+d_ffn = 16
+masking_ratio = 0.15
+mean_mask_length = 3
+
 [deep_mvi]
 max_epoch = 1000
 patience = 2

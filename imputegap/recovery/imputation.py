@@ -1983,6 +1983,109 @@ class Imputation:
 
                 return self
 
+        class MTSIT(BaseImputer):
+            """
+            MTSIT class to impute missing values using Multivariate Time Series Imputation with Transformers
+
+            Methods
+            -------
+            impute(self, user_def=True, params=None):
+                Perform imputation using the MTSIT algorithm.
+
+            Example
+            -------
+            $ mtsit.impute(params={"seq_len": 48, "epochs": 100, "batch_size": 64, "sliding_windows": 1, "d_model": 16, "n_heads": 4, "n_layers": 3, "d_ffn": 16, "masking_ratio": 0.15, "mean_mask_length": 3})
+
+            Changes
+            -------
+            - Self-contained implementation written from the paper (the authors' repository carries no licence).
+
+            - Sliding-window loader: the (time x series) matrix is cut into windows of seq_len time steps; overlapping predictions are averaged.
+
+            - Natural gaps (NaN) are never used as training targets; only artificially masked observed entries are scored.
+
+            - Checkpoint selection by minimum MAE on a held-out share of windows with fixed geometric masks.
+
+            - Reduction of the epochs parameter to 100 for performance reasons (paper: 400).
+            """
+            algorithm = "mtsit"
+
+            def impute(self, user_def=True, params=None, tr_ratio=0.9):
+                """
+                Perform imputation using the MTSIT algorithm.
+
+                Parameters
+                ----------
+                user_def : bool, optional
+                    Whether to use user-defined or default parameters (default is True).
+
+                params : dict, optional
+                    Parameters of the MTSIT algorithm, if None, default ones are loaded.
+                    Keys must follow the order below (ImputeGAP reads the values positionally).
+
+                tr_ratio: float, optional
+                    Share of windows used for training; the rest select the checkpoint (default is 0.9).
+
+                    **Algorithm parameters:**
+
+                        seq_len : int
+                            Window length in time steps; -1 uses min(48, number of time steps).
+
+                        epochs : int
+                            Number of training epochs (default 100).
+
+                        batch_size : int
+                            Number of windows per mini-batch; -1 uses min(64, number of training windows).
+
+                        sliding_windows : int
+                            Stride between consecutive windows; 0 means non-overlapping windows.
+
+                        d_model : int
+                            Embedding width of each time point (default 16).
+
+                        n_heads : int
+                            Number of attention heads; must divide d_model (default 4).
+
+                        n_layers : int
+                            Number of stacked encoder blocks (default 3).
+
+                        d_ffn : int
+                            Hidden width of the position-wise feed-forward network (default 16).
+
+                        masking_ratio : float
+                            Expected share of observed entries masked during training (default 0.15).
+
+                        mean_mask_length : int
+                            Mean length of a masked segment in the geometric masks (default 3).
+
+                Returns
+                -------
+                self : MTSIT
+                    The object with `recov_data` set.
+
+                Example
+                -------
+                    >>> mtsit_imputer = Imputation.DeepLearning.MTSIT(incomp_data)
+                    >>> mtsit_imputer.impute()  # default parameters for imputation > or
+                    >>> mtsit_imputer.impute(params={"seq_len": 48, "epochs": 100, "batch_size": 64, "sliding_windows": 1, "d_model": 16, "n_heads": 4, "n_layers": 3, "d_ffn": 16, "masking_ratio": 0.15, "mean_mask_length": 3})  # user-defined > or
+                    >>> mtsit_imputer.impute(user_def=False, params={"input_data": ts.data, "optimizer": "ray_tune"})  # automl with ray_tune
+                    >>> recov_data = mtsit_imputer.recov_data
+
+                References
+                ----------
+                A. Y. Yildiz, E. Koc and A. Koc, "Multivariate Time Series Imputation With Transformers," IEEE Signal Processing Letters, vol. 29, pp. 2517-2521, 2022, doi: 10.1109/LSP.2022.3224880.
+                """
+                from imputegap.algorithms.mtsit import mtsit
+
+                if params is not None:
+                    seq_len, epochs, batch_size, sliding_windows, d_model, n_heads, n_layers, d_ffn, masking_ratio, mean_mask_length = self._check_params(user_def, params)
+                else:
+                    seq_len, epochs, batch_size, sliding_windows, d_model, n_heads, n_layers, d_ffn, masking_ratio, mean_mask_length = utils.load_parameters(query="default", algorithm=self.algorithm, verbose=self.verbose)
+
+                self.recov_data = mtsit(incomp_data=self.incomp_data, seq_len=seq_len, epochs=epochs, batch_size=batch_size, sliding_windows=sliding_windows, d_model=d_model, n_heads=n_heads, n_layers=n_layers, d_ffn=d_ffn, masking_ratio=masking_ratio, mean_mask_length=mean_mask_length, tr_ratio=tr_ratio, logs=self.logs, verbose=self.verbose)
+
+                return self
+
         class DeepMVI(BaseImputer):
             """
             DeepMVI class to impute missing values using Deep Multivariate Imputation
