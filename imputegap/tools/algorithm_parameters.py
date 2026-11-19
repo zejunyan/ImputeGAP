@@ -133,6 +133,19 @@ RAYTUNE_PARAMS = {
         "num_workers": 0
     },
 
+    "mtsit": {
+        "seq_len": tune.grid_search([24, 48]),
+        "epochs": 100,
+        "batch_size": 64,
+        "sliding_windows": 1,
+        "d_model": tune.grid_search([16, 32]),
+        "n_heads": 4,
+        "n_layers": tune.grid_search([2, 3]),
+        "d_ffn": tune.grid_search([16, 64]),
+        "masking_ratio": 0.15,
+        "mean_mask_length": 3
+    },
+
     "deep_mvi": {
         "max_epoch": 1000,
         "patience": tune.grid_search([2, 5]),  # Number of early stopping patience
