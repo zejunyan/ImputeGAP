@@ -57,10 +57,19 @@ class MTSITNetwork(nn.Module):
     """Input projection + learnable positions -> N encoder blocks -> linear decoder.
 
     Inputs and outputs have shape ``(batch, seq_len, n_series)``.
+    ``profile="paper"`` follows Eqs. (1) and (10) of the paper. ``profile="released"``
+    adds the two operations of the authors' released code: the input projection is
+    scaled by sqrt(d_model), and GELU and dropout are applied before the decoder.
     """
 
-    def __init__(self, n_series, seq_len, d_model, n_heads, n_layers, d_ffn, dropout):
+    def __init__(
+        self, n_series, seq_len, d_model, n_heads, n_layers, d_ffn, dropout, profile="paper"
+    ):
         super().__init__()
+        if profile not in ("paper", "released"):
+            raise ValueError("profile must be 'paper' or 'released'")
+        self.profile = profile
+        self.d_model = d_model
         self.projection = nn.Linear(n_series, d_model)
         self.position = nn.Parameter(torch.empty(1, seq_len, d_model))
         nn.init.uniform_(self.position, -0.02, 0.02)
@@ -71,9 +80,14 @@ class MTSITNetwork(nn.Module):
         self.decoder = nn.Linear(d_model, n_series)
 
     def forward(self, inputs):
-        hidden = self.dropout(self.projection(inputs) + self.position)
+        projected = self.projection(inputs)
+        if self.profile == "released":
+            projected = projected * math.sqrt(self.d_model)
+        hidden = self.dropout(projected + self.position)
         for block in self.blocks:
             hidden = block(hidden)
+        if self.profile == "released":
+            hidden = self.dropout(torch.nn.functional.gelu(hidden))
         return self.decoder(hidden)
 
 
@@ -145,6 +159,12 @@ def recov_mtsit(
     seed=42,
     device=None,
     verbose=False,
+    *,
+    profile="paper",
+    normalize=True,
+    train_rows=None,
+    validation_rows=None,
+    validation_targets=None,
 ):
     """Impute the NaN entries of ``incomp_data`` (shape ``(T, N)``) with MTSIT.
 
@@ -173,6 +193,23 @@ def recov_mtsit(
     seed : int
         Seed for windows split, masks and model initialisation.
 
+    Reproduction mode (keyword-only; the defaults give the standard ImputeGAP behaviour):
+
+    profile : {"paper", "released"}
+        "released" adds the sqrt(d_model) input scaling and the GELU and dropout
+        before the decoder of the authors' released code.
+    normalize : bool
+        If False, ``incomp_data`` is assumed to be standardized already (for example
+        with training-set statistics) and is used as given.
+    train_rows, validation_rows : numpy.ndarray of bool, shape (T,), optional
+        Time rows usable for training and for checkpoint selection. A window is used
+        only if all its rows belong to the set; all windows are imputed. If omitted,
+        windows are split at random according to ``tr_ratio``.
+    validation_targets : list of numpy.ndarray of bool, shape (T, N), optional
+        Fixed validation masks (observed entries to hide). The checkpoint with the
+        lowest validation MAE, averaged over the masks, is selected. If omitted,
+        fixed geometric masks are drawn.
+
     Returns
     -------
     numpy.ndarray
@@ -198,12 +235,15 @@ def recov_mtsit(
     )
 
     # Step 1: per-series standardisation with observed values only.
-    with warnings.catch_warnings():  # all-missing series are handled just below
-        warnings.simplefilter("ignore", RuntimeWarning)
-        mean = np.nanmean(data, axis=0)
-        std = np.nanstd(data, axis=0)
-    mean = np.where(np.isfinite(mean), mean, 0.0)
-    std = np.where(np.isfinite(std) & (std > 0), std, 1.0)
+    if normalize:
+        with warnings.catch_warnings():  # all-missing series are handled just below
+            warnings.simplefilter("ignore", RuntimeWarning)
+            mean = np.nanmean(data, axis=0)
+            std = np.nanstd(data, axis=0)
+        mean = np.where(np.isfinite(mean), mean, 0.0)
+        std = np.where(np.isfinite(std) & (std > 0), std, 1.0)
+    else:
+        mean, std = np.zeros(n_series), np.ones(n_series)
     normalized = np.where(missing, 0.0, (data - mean) / std).astype(np.float32)
     observed = ~missing
 
@@ -214,15 +254,40 @@ def recov_mtsit(
     values = np.stack([normalized[s : s + seq_len] for s in starts])
     observed_w = np.stack([observed[s : s + seq_len] for s in starts])
 
-    order = rng.permutation(len(starts))
-    n_validation = round((1.0 - tr_ratio) * len(starts)) if len(starts) > 1 else 0
-    n_validation = min(max(n_validation, 1 if len(starts) > 1 else 0), len(starts) - 1)
-    validation_ids, train_ids = order[:n_validation], order[n_validation:]
+    if train_rows is None:
+        order = rng.permutation(len(starts))
+        n_validation = round((1.0 - tr_ratio) * len(starts)) if len(starts) > 1 else 0
+        n_validation = min(max(n_validation, 1 if len(starts) > 1 else 0), len(starts) - 1)
+        validation_ids, train_ids = order[:n_validation], order[n_validation:]
+    else:
+        def windows_within(rows):
+            rows = np.asarray(rows, dtype=bool)
+            if rows.shape != (n_steps,):
+                raise ValueError("train_rows/validation_rows must have shape (T,)")
+            return np.array([i for i, s in enumerate(starts) if rows[s : s + seq_len].all()], dtype=int)
+
+        train_ids = windows_within(train_rows)
+        validation_ids = (
+            windows_within(validation_rows) if validation_rows is not None else np.array([], dtype=int)
+        )
+        if not len(train_ids):
+            raise ValueError("No complete training window inside train_rows")
     batch_size = min(64, len(train_ids)) if batch_size is None or batch_size <= 0 else batch_size
 
     # Fixed validation masks so that checkpoint selection is repeatable.
     validation_inputs = validation_masks = None
-    if len(validation_ids):
+    validation_sets = []
+    if len(validation_ids) and validation_targets is not None:
+        for target in validation_targets:
+            target = np.asarray(target, dtype=bool)
+            if target.shape != data.shape:
+                raise ValueError("validation_targets must have shape (T, N)")
+            target_w = np.stack([target[s : s + seq_len] for s in starts])[validation_ids]
+            masks_v = target_w & observed_w[validation_ids]
+            if masks_v.any():
+                inputs_v = np.where(observed_w[validation_ids] & ~masks_v, values[validation_ids], 0.0)
+                validation_sets.append((inputs_v, masks_v))
+    elif len(validation_ids):
         validation_inputs, validation_masks = _masked_batch(
             values,
             observed_w,
@@ -235,9 +300,11 @@ def recov_mtsit(
         )
         if not validation_masks.any():
             validation_inputs = validation_masks = None
+        else:
+            validation_sets = [(validation_inputs, validation_masks)]
 
     model = MTSITNetwork(
-        n_series, seq_len, d_model, n_heads, n_layers, d_ffn, dropout
+        n_series, seq_len, d_model, n_heads, n_layers, d_ffn, dropout, profile=profile
     ).to(device)
     optimizer = torch.optim.RAdam(model.parameters(), lr=lr)
     best_mae, best_state = math.inf, None
@@ -266,15 +333,14 @@ def recov_mtsit(
             squared += loss.item() * int(masks.sum())
             count += int(masks.sum())
 
-        if validation_masks is not None:
+        if validation_sets:
             model.eval()
+            maes = []
             with torch.no_grad():
-                prediction = model(
-                    torch.from_numpy(validation_inputs).float().to(device)
-                ).cpu().numpy()
-            mae = float(
-                np.abs(prediction - values[validation_ids])[validation_masks].mean()
-            )
+                for inputs_v, masks_v in validation_sets:
+                    prediction = model(torch.from_numpy(inputs_v).float().to(device)).cpu().numpy()
+                    maes.append(float(np.abs(prediction - values[validation_ids])[masks_v].mean()))
+            mae = float(np.mean(maes))
             if mae < best_mae:
                 best_mae = mae
                 best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
