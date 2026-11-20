@@ -3,7 +3,7 @@ import time
 from imputegap.wrapper.AlgoPython.MTSIT.recovMTSIT import recov_mtsit
 
 
-def mtsit(incomp_data, seq_len=-1, epochs=100, batch_size=-1, sliding_windows=1, d_model=16, n_heads=4, n_layers=3, d_ffn=16, masking_ratio=0.15, mean_mask_length=3, tr_ratio=0.9, seed=42, logs=True, verbose=True):
+def mtsit(incomp_data, seq_len=-1, epochs=100, batch_size=-1, sliding_windows=1, d_model=16, n_heads=4, n_layers=3, d_ffn=16, masking_ratio=0.15, mean_mask_length=3, tr_ratio=0.9, seed=42, logs=True, verbose=True, **reproduction):
     """
     Perform imputation using the MTSIT algorithm (Multivariate Time Series Imputation with Transformers).
 
@@ -39,6 +39,10 @@ def mtsit(incomp_data, seq_len=-1, epochs=100, batch_size=-1, sliding_windows=1,
         Whether to log the execution time (default is True).
     verbose : bool, optional
         Whether to display the training progress (default is True).
+    **reproduction : optional
+        Reproduction-mode options passed to the model (``profile``, ``normalize``,
+        ``train_rows``, ``validation_rows``, ``validation_targets``); see ``recov_mtsit``.
+        If omitted, the standard ImputeGAP behaviour is used.
 
     Returns
     -------
@@ -56,7 +60,7 @@ def mtsit(incomp_data, seq_len=-1, epochs=100, batch_size=-1, sliding_windows=1,
     """
     start_time = time.time()  # Record start time
 
-    recov_data = recov_mtsit(incomp_data=incomp_data, seq_len=seq_len, epochs=epochs, batch_size=batch_size, sliding_windows=sliding_windows, d_model=d_model, n_heads=n_heads, n_layers=n_layers, d_ffn=d_ffn, masking_ratio=masking_ratio, mean_mask_length=mean_mask_length, tr_ratio=tr_ratio, seed=seed, verbose=verbose)
+    recov_data = recov_mtsit(incomp_data=incomp_data, seq_len=seq_len, epochs=epochs, batch_size=batch_size, sliding_windows=sliding_windows, d_model=d_model, n_heads=n_heads, n_layers=n_layers, d_ffn=d_ffn, masking_ratio=masking_ratio, mean_mask_length=mean_mask_length, tr_ratio=tr_ratio, seed=seed, verbose=verbose, **reproduction)
 
     end_time = time.time()
     if logs and verbose:
